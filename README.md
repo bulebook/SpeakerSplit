@@ -3,6 +3,8 @@
 本地把视频/音频里不同人的说话声分开、转成文字，检查修正后按人导出 WAV。
 所有处理都在本机完成，不上传素材、声纹或转写结果。
 
+> 已打包的 Windows 版本见 [Releases](https://github.com/bulebook/SpeakerSplit/releases)（不含模型，首次处理自动下载）。
+
 ---
 
 ## 一、安装（只做一次）
