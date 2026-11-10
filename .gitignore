@@ -9,6 +9,7 @@ venv/
 build/
 dist/
 *.spec.bak
+*.bak
 
 # 模型与素材（运行时下载，不入库）
 models/
