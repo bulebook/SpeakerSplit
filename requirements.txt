@@ -1,0 +1,17 @@
+# torch / torchaudio 需单独安装（CUDA 版见 install.ps1）
+PySide6>=6.10
+faster-whisper>=1.1.0
+sherpa-onnx>=1.10.0
+soundfile>=0.12.1
+numpy>=1.26,<3
+
+# Demucs 及其运行依赖（install.ps1 用 --no-deps 安装 demucs，避免它改动 torch）
+demucs>=4.1.0
+openunmix
+sphn
+safetensors
+julius
+lameenc
+pyyaml
+tqdm
+einops
