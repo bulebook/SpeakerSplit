@@ -55,6 +55,19 @@ def main() -> int:
 
     ensure_hf_endpoint()
 
+    def _log_uncaught(exc_type, exc, tb):
+        logging.error("未捕获异常", exc_info=(exc_type, exc, tb))
+
+    sys.excepthook = _log_uncaught
+
+    import threading
+
+    def _log_thread_uncaught(args):
+        logging.error("线程未捕获异常",
+                      exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+    threading.excepthook = _log_thread_uncaught
+
     if "--diarize" in sys.argv:
         from app.diarize_cli import main as diarize_main
         return diarize_main(sys.argv[sys.argv.index("--diarize") + 1:])

@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSettings, Qt, QThread, QVariantAnimation, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
+    QComboBox, QFrame, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QPushButton, QScrollArea, QStackedWidget,
     QVBoxLayout, QWidget,
 )
@@ -56,11 +56,6 @@ class SettingsOverlay(QWidget):
         self.card = QFrame()
         self.card.setObjectName("SettingsCard")
         self.card.setFixedSize(self.CARD_W, self.CARD_H)
-        shadow = QGraphicsDropShadowEffect(self.card)
-        shadow.setBlurRadius(54)
-        shadow.setOffset(0, 12)
-        shadow.setColor(theme.c("shadow"))
-        self.card.setGraphicsEffect(shadow)
         row.addWidget(self.card)
         row.addStretch(1)
         self.outer.addLayout(row)

@@ -8,10 +8,11 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import (
-    QLineF, QPoint, QPointF, QRectF, Qt, QThread, QUrl, Signal,
+    QPoint, QPointF, QRectF, Qt, QThread, QUrl, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QFontMetrics, QPainter, QPen, QUndoCommand, QUndoStack,
+    QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen,
+    QUndoCommand, QUndoStack,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -32,7 +33,8 @@ RULER_H = 26
 LANE_H = 62
 BTN = 20
 PEAK_BUCKET = 0.02
-PPS_MIN, PPS_MAX = 6.0, 160.0
+PPS_MIN, PPS_MAX = 1.0, 160.0
+PPS_MAX_WIDTH = 60000
 
 _PEAK_CACHE: dict[str, tuple[np.ndarray, float]] = {}
 
@@ -342,18 +344,30 @@ class TrackCanvas(QWidget):
         if i1 <= i0:
             return
         sub = peaks[i0:i1]
-        cols = max(1, int(rect.width()))
+        cols = max(1, min(int(rect.width()), 4096))
         if len(sub) > cols:
             sub = sub[np.linspace(0, len(sub) - 1, cols).astype(np.int32)]
+        if not np.all(np.isfinite(sub)):
+            sub = np.nan_to_num(sub)
+        n = len(sub)
+        if n == 0 or rect.width() <= 0:
+            return
+
         mid = rect.center().y() + 8
         half = rect.height() / 2 - 12
-        step = rect.width() / len(sub)
+        step = rect.width() / n
+        path = QPainterPath()
+        path.moveTo(rect.left(), mid)
+        for i, v in enumerate(sub):
+            path.lineTo(rect.left() + i * step, mid - float(v) * half)
+        for i in range(n - 1, -1, -1):
+            path.lineTo(rect.left() + i * step, mid + float(sub[i]) * half)
+        path.closeSubpath()
         wave_color = (base or QColor(theme.ACCENT)).darker(115)
         wave_color.setAlpha(150)
-        p.setPen(QPen(wave_color, 1))
-        p.drawLines([QLineF(rect.left() + i * step, mid - float(v) * half,
-                            rect.left() + i * step, mid + float(v) * half)
-                     for i, v in enumerate(sub)])
+        p.setPen(Qt.NoPen)
+        p.setBrush(wave_color)
+        p.drawPath(path)
 
     def _draw_fades(self, p: QPainter, rect: QRectF, clip: Clip):
         scale = self._scale()
@@ -685,6 +699,9 @@ class EditorView(QWidget):
     def _on_zoom(self, value: int):
         ratio = PPS_MAX / PPS_MIN
         pps = PPS_MIN * (ratio ** (value / 1000.0))
+        if self.project:
+            limit = (PPS_MAX_WIDTH - HEADER_W - 40) / max(1.0, self.project.duration)
+            pps = min(pps, limit)
         self.canvas.set_pps(pps)
 
     def _sync_zoom_slider(self, pps: float):

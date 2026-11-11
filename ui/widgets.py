@@ -1632,12 +1632,18 @@ class LibraryList(QListWidget):
         item.setSizeHint(QSize(0, 24))
         self.addItem(item)
 
+    _ICONS: dict[str, QIcon] = {}
+
     def add_segment(self, payload: dict, color: str, text: str, sub: str):
         item = QListWidgetItem(text)
         item.setData(Qt.UserRole, payload)
         item.setToolTip(f"{text}\n{sub}")
         item.setSizeHint(QSize(0, 38))
-        item.setIcon(QIcon(self._dot(color)))
+        icon = LibraryList._ICONS.get(color)
+        if icon is None:
+            icon = QIcon(self._dot(color))
+            LibraryList._ICONS[color] = icon
+        item.setIcon(icon)
         self.addItem(item)
 
     @staticmethod
