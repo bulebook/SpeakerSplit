@@ -36,6 +36,52 @@ PEAK_BUCKET = 0.02
 PPS_MIN, PPS_MAX = 1.0, 160.0
 PPS_MAX_WIDTH = 60000
 
+_FONT_CACHE: dict[tuple, QFont] = {}
+_PEN_CACHE: dict[tuple, QPen] = {}
+_COLOR_CACHE: dict[tuple, QColor] = {}
+_METRICS_CACHE: dict[tuple, QFontMetrics] = {}
+
+
+def _font(family: str, px: float, bold: bool) -> QFont:
+    key = (family, int(round(px)), bold)
+    font = _FONT_CACHE.get(key)
+    if font is None:
+        font = QFont(family)
+        font.setPixelSize(max(1, int(round(px))))
+        font.setBold(bold)
+        _FONT_CACHE[key] = font
+    return font
+
+
+def _pen(color: QColor, width: float = 1.0) -> QPen:
+    key = (color.rgba(), round(width, 2))
+    pen = _PEN_CACHE.get(key)
+    if pen is None:
+        pen = QPen(color, width)
+        _PEN_CACHE[key] = pen
+    return pen
+
+
+def _color(value, alpha: int | None = None) -> QColor:
+    base = QColor(value) if isinstance(value, str) else value
+    key = (base.rgba(), alpha)
+    color = _COLOR_CACHE.get(key)
+    if color is None:
+        color = QColor(base)
+        if alpha is not None:
+            color.setAlpha(alpha)
+        _COLOR_CACHE[key] = color
+    return color
+
+
+def _metrics(font: QFont) -> QFontMetrics:
+    key = font.key()
+    metrics = _METRICS_CACHE.get(key)
+    if metrics is None:
+        metrics = QFontMetrics(font)
+        _METRICS_CACHE[key] = metrics
+    return metrics
+
 _PEAK_CACHE: dict[str, tuple[np.ndarray, float]] = {}
 
 
@@ -122,14 +168,19 @@ class TrackCanvas(QWidget):
         self._peaks: dict[str, tuple[np.ndarray, float]] = {}
         self._pending: set[str] = set()
         self._workers: list[_PeaksWorker] = []
+        self._wave_cache: dict[tuple, np.ndarray] = {}
+        self._label_cache: dict[tuple, str] = {}
         self.setMinimumHeight(240)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
 
     def set_project(self, project: EditProject):
         self.project = project
         self.selection.clear()
         self.selected = None
+        self._wave_cache.clear()
+        self._label_cache.clear()
         self._ensure_peaks()
         self._update_width()
         self.update()
@@ -148,8 +199,12 @@ class TrackCanvas(QWidget):
     def set_playhead(self, t: float):
         if abs(t - self.playhead) < 0.01:
             return
+        old = self.playhead
         self.playhead = t
-        self.update()
+        # 只刷新旧/新两根播放线所在的窄条，避免整张画布重绘
+        for value in (old, t):
+            x = int(self._x(value))
+            self.update(x - 3, 0, 7, self.height())
 
     def _ensure_peaks(self):
         if not self.project:
@@ -218,170 +273,206 @@ class TrackCanvas(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), theme.c("table_bg"))
+        rect = event.rect()
+        p.fillRect(rect, theme.c("table_bg"))
         if not self.project:
             return
-        w = self.width()
-        duration = max(0.5, self.project.duration)
 
-        p.setPen(QPen(theme.c("border"), 1))
-        p.drawLine(0, RULER_H - 1, w, RULER_H - 1)
-        font = QFont(self.font())
-        font.setPixelSize(10)
-        font.setBold(True)
-        p.setFont(font)
         scale = self._scale()
-        minor = next((s for s in (0.5, 1, 2, 5, 10, 15, 30, 60, 120) if s * scale >= 9), 300)
-        major = next((s for s in (1, 2, 5, 10, 15, 30, 60, 120, 300) if s * scale >= 70), 600)
-        t = 0.0
-        while t <= duration:
-            x = self._x(t)
-            is_major = abs((t / major) - round(t / major)) < 1e-6
-            p.setPen(QPen(theme.c("border"), 1))
-            p.drawLine(int(x), RULER_H - (6 if is_major else 3), int(x), RULER_H - 1)
-            if is_major:
-                p.setPen(theme.c("text3"))
-                p.drawText(QRectF(x - 24, 2, 48, 16), Qt.AlignHCenter, fmt_short(t))
-            t += minor
-
+        t0 = self._t(max(rect.left(), HEADER_W))
+        t1 = self._t(rect.right())
+        family = self.font().family()
+        f_ruler = _font(family, 10, True)
+        f_name = _font(family, 12, True)
+        f_ms = _font(family, 10, True)
+        f_label = _font(family, 10.5, True)
+        f_sub = _font(family, 9.5, False)
         any_solo = any(tr.solo for tr in self.project.tracks)
+
+        # 标尺只画可见时间段内的刻度
+        border = _color(theme.c("border"))
+        p.setPen(_pen(border))
+        p.drawLine(max(0, rect.left()), RULER_H - 1,
+                   min(self.width(), rect.right()), RULER_H - 1)
+        if rect.top() <= RULER_H:
+            minor = next((s for s in (0.5, 1, 2, 5, 10, 15, 30, 60, 120)
+                          if s * scale >= 9), 300)
+            major = next((s for s in (1, 2, 5, 10, 15, 30, 60, 120, 300)
+                          if s * scale >= 70), 600)
+            text3 = _color(theme.c("text3"))
+            t = int(max(0.0, t0) // minor) * minor
+            p.setFont(f_ruler)
+            while t <= t1 + minor:
+                x = self._x(t)
+                is_major = abs(t / major - round(t / major)) < 1e-6
+                p.setPen(_pen(border))
+                p.drawLine(int(x), RULER_H - (6 if is_major else 3),
+                           int(x), RULER_H - 1)
+                if is_major:
+                    p.setPen(text3)
+                    p.drawText(QRectF(x - 24, 2, 48, 16),
+                               Qt.AlignHCenter, fmt_short(t))
+                t += minor
+
         for ti, track in enumerate(self.project.tracks):
             top = self._lane_top(ti)
-            p.setPen(Qt.NoPen)
-            p.setBrush(theme.c("hover") if ti % 2 == 0 else QColor(0, 0, 0, 0))
-            p.drawRect(QRectF(0, top, w, LANE_H))
-
-            p.setBrush(QColor(track.color))
-            p.setPen(Qt.NoPen)
-            p.drawEllipse(QRectF(10, top + LANE_H / 2 - 4, 8, 8))
-
-            p.setPen(theme.c("text2"))
-            f = QFont(self.font())
-            f.setPixelSize(12)
-            f.setBold(True)
-            p.setFont(f)
-            name_w = int(self._header_buttons(ti)["mute"].left() - 24 - 6)
-            name = QFontMetrics(f).elidedText(track.name, Qt.ElideRight, name_w)
-            p.drawText(QRectF(24, top, name_w, LANE_H),
-                       Qt.AlignLeft | Qt.AlignVCenter, name)
-
-            for kind, rect in self._header_buttons(ti).items():
-                on = track.mute if kind == "mute" else track.solo
-                if on:
-                    bg = QColor("#FF3B30" if kind == "mute" else "#FF9F0A")
-                else:
-                    bg = QColor(theme.c("text3"))
-                    bg.setAlpha(30)
-                p.setPen(Qt.NoPen)
-                p.setBrush(bg)
-                p.drawEllipse(rect)
-                f3 = QFont(self.font())
-                f3.setPixelSize(10)
-                f3.setBold(True)
-                p.setFont(f3)
-                p.setPen(QColor(255, 255, 255, 235) if on else theme.c("text2"))
-                p.drawText(rect, Qt.AlignCenter, "M" if kind == "mute" else "S")
-
+            if top > rect.bottom() or top + LANE_H < rect.top():
+                continue
+            self._paint_lane(p, ti, track, rect, f_name, f_ms)
             dim = track.mute or (any_solo and not track.solo)
             for clip in track.clips:
-                rect = self._clip_rect(ti, clip)
-                base = QColor(track.color)
-                fill = QColor(base)
-                fill.setAlpha(52 if dim else 72)
-                p.setPen(QPen(QColor(base) if not dim else QColor(base.darker(120)), 1))
-                p.setBrush(fill)
-                p.drawRoundedRect(rect, 9, 9)
+                if clip.end < t0 or clip.start > t1:
+                    continue
+                self._paint_clip(p, ti, track, clip, dim, f_label, f_sub)
 
-                if not dim:
-                    p.save()
-                    p.setClipRect(rect.adjusted(2, 18, -2, -4))
-                    self._draw_wave(p, rect, clip, base)
-                    p.restore()
-                    self._draw_fades(p, rect, clip)
+        x = int(self._x(self.playhead))
+        if rect.left() - 2 <= x <= rect.right() + 2:
+            p.setPen(_pen(_color(theme.c("accent")), 1.6))
+            p.drawLine(x, RULER_H - 4, x, self.height() - 4)
 
-                label_color = QColor(theme.c("text"))
-                label_color.setAlpha(120 if dim else 210)
-                p.setPen(label_color)
-                f2 = QFont(self.font())
-                f2.setPixelSize(10.5)
-                f2.setBold(True)
-                p.setFont(f2)
-                if rect.width() > 26:
-                    p.drawText(rect.adjusted(8, 3, -8, -rect.height() + 18),
-                               Qt.AlignLeft | Qt.AlignTop, track.name)
-                f2.setPixelSize(9.5)
-                f2.setBold(False)
-                p.setFont(f2)
-                label_color.setAlpha(90 if dim else 165)
-                p.setPen(label_color)
-                if rect.width() > 52:
-                    p.drawText(rect.adjusted(8, 0, -8, -4),
-                               Qt.AlignLeft | Qt.AlignBottom, f"{clip.dur:.1f}s")
-                if clip.gain_db and rect.width() > 40:
-                    label_color.setAlpha(110 if dim else 220)
-                    p.setPen(label_color)
-                    p.drawText(rect.adjusted(6, 0, -6, 0),
-                               Qt.AlignRight | Qt.AlignBottom,
-                               f"{clip.gain_db:+.0f} dB")
+    def _paint_lane(self, p: QPainter, ti: int, track, rect, f_name, f_ms):
+        top = self._lane_top(ti)
+        left = max(0.0, float(rect.left()))
+        width = min(float(self.width()), float(rect.right())) - left
+        p.setPen(Qt.NoPen)
+        p.setBrush(_color(theme.c("hover")) if ti % 2 == 0 else QColor(0, 0, 0, 0))
+        p.drawRect(QRectF(left, top, max(0.0, width), LANE_H))
 
-                if clip.id in self.selection:
-                    p.setBrush(Qt.NoBrush)
-                    p.setPen(QPen(theme.c("accent"), 2))
-                    p.drawRoundedRect(rect, 9, 9)
+        if rect.left() > HEADER_W:
+            return
+        p.setBrush(_color(track.color))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(QRectF(10, top + LANE_H / 2 - 4, 8, 8))
 
-        x = self._x(self.playhead)
-        p.setPen(QPen(theme.c("accent"), 1.6))
-        p.drawLine(int(x), RULER_H - 4, int(x), self.height() - 4)
+        name_w = int(self._header_buttons(ti)["mute"].left() - 24 - 6)
+        key = (track.name, name_w, f_name.key())
+        name = self._label_cache.get(key)
+        if name is None:
+            name = _metrics(f_name).elidedText(track.name, Qt.ElideRight, name_w)
+            self._label_cache[key] = name
+        p.setFont(f_name)
+        p.setPen(_color(theme.c("text2")))
+        p.drawText(QRectF(24, top, name_w, LANE_H),
+                   Qt.AlignLeft | Qt.AlignVCenter, name)
+
+        white = _color("#FFFFFF", 235)
+        for kind, box in self._header_buttons(ti).items():
+            on = track.mute if kind == "mute" else track.solo
+            if on:
+                bg = _color("#FF3B30" if kind == "mute" else "#FF9F0A")
+            else:
+                bg = _color(theme.c("text3"), 30)
+            p.setPen(Qt.NoPen)
+            p.setBrush(bg)
+            p.drawEllipse(box)
+            p.setFont(f_ms)
+            p.setPen(white if on else _color(theme.c("text2")))
+            p.drawText(box, Qt.AlignCenter, "M" if kind == "mute" else "S")
+
+    def _paint_clip(self, p: QPainter, ti: int, track, clip, dim: bool,
+                    f_label, f_sub):
+        rect = self._clip_rect(ti, clip)
+        base = _color(track.color)
+        pen_color = _color(base.darker(120)) if dim else base
+        p.setPen(_pen(pen_color))
+        p.setBrush(_color(base, 52 if dim else 72))
+        p.drawRoundedRect(rect, 9, 9)
+
+        if not dim and rect.width() >= 2:
+            p.save()
+            p.setClipRect(rect.adjusted(2, 18, -2, -4))
+            self._draw_wave(p, rect, clip, base)
+            p.restore()
+            self._draw_fades(p, rect, clip)
+
+        p.setFont(f_label)
+        p.setPen(_color(theme.c("text"), 120 if dim else 210))
+        if rect.width() > 26:
+            name_w = int(rect.width()) - 16
+            key = (track.name, name_w, f_label.key())
+            name = self._label_cache.get(key)
+            if name is None:
+                name = _metrics(f_label).elidedText(track.name, Qt.ElideRight, name_w)
+                self._label_cache[key] = name
+            p.drawText(rect.adjusted(8, 3, -8, -rect.height() + 18),
+                       Qt.AlignLeft | Qt.AlignTop, name)
+
+        p.setFont(f_sub)
+        p.setPen(_color(theme.c("text"), 90 if dim else 165))
+        if rect.width() > 52:
+            p.drawText(rect.adjusted(8, 0, -8, -4),
+                       Qt.AlignLeft | Qt.AlignBottom, f"{clip.dur:.1f}s")
+        if clip.gain_db and rect.width() > 40:
+            p.setPen(_color(theme.c("text"), 110 if dim else 220))
+            p.drawText(rect.adjusted(6, 0, -6, 0),
+                       Qt.AlignRight | Qt.AlignBottom,
+                       f"{clip.gain_db:+.0f} dB")
+
+        if clip.id in self.selection:
+            p.setBrush(Qt.NoBrush)
+            p.setPen(_pen(_color(theme.c("accent")), 2))
+            p.drawRoundedRect(rect, 9, 9)
 
     def _draw_wave(self, p: QPainter, rect: QRectF, clip: Clip,
                    base: QColor | None = None):
         item = self._peaks.get(clip.source) or _PEAK_CACHE.get(clip.source)
-        if item is None:
+        if item is None or rect.width() <= 0:
             return
         peaks, rate = item
         i0 = max(0, int(clip.src_in * rate))
         i1 = min(len(peaks), int(round(clip.src_out * rate)))
         if i1 <= i0:
             return
-        sub = peaks[i0:i1]
-        cols = max(1, min(int(rect.width()), 4096))
-        if len(sub) > cols:
-            sub = sub[np.linspace(0, len(sub) - 1, cols).astype(np.int32)]
-        if not np.all(np.isfinite(sub)):
-            sub = np.nan_to_num(sub)
-        n = len(sub)
-        if n == 0 or rect.width() <= 0:
-            return
 
+        cols = max(1, min(int(rect.width()), 800))
+        key = (clip.source, i0, i1, cols)
+        values = self._wave_cache.get(key)
+        if values is None:
+            sub = peaks[i0:i1]
+            if len(sub) > cols:
+                edges = np.linspace(0, len(sub), cols + 1).astype(np.int64)
+                edges[-1] = len(sub)
+                values = np.maximum.reduceat(sub, edges[:-1])
+            else:
+                values = sub
+            values = np.nan_to_num(np.asarray(values, dtype=np.float32),
+                                   nan=0.0, posinf=1.0, neginf=0.0)
+            if len(self._wave_cache) > 2000:
+                self._wave_cache.clear()
+            self._wave_cache[key] = values
+
+        n = len(values)
+        if n == 0:
+            return
         mid = rect.center().y() + 8
-        half = rect.height() / 2 - 12
+        half = max(1.0, rect.height() / 2 - 12)
         step = rect.width() / n
         path = QPainterPath()
         path.moveTo(rect.left(), mid)
-        for i, v in enumerate(sub):
+        for i, v in enumerate(values):
             path.lineTo(rect.left() + i * step, mid - float(v) * half)
         for i in range(n - 1, -1, -1):
-            path.lineTo(rect.left() + i * step, mid + float(sub[i]) * half)
+            path.lineTo(rect.left() + i * step, mid + float(values[i]) * half)
         path.closeSubpath()
-        wave_color = (base or QColor(theme.ACCENT)).darker(115)
-        wave_color.setAlpha(150)
+        wave_color = _color((base or QColor(theme.ACCENT)).darker(115), 150)
         p.setPen(Qt.NoPen)
         p.setBrush(wave_color)
         p.drawPath(path)
 
     def _draw_fades(self, p: QPainter, rect: QRectF, clip: Clip):
         scale = self._scale()
+        fade = _color("#000000", 60)
         if clip.fade_in > 0:
             fw = min(rect.width(), clip.fade_in * scale)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(0, 0, 0, 60))
+            p.setBrush(fade)
             p.drawPolygon(QPointF(rect.left(), rect.top()),
                           QPointF(rect.left() + fw, rect.top()),
                           QPointF(rect.left(), rect.bottom()))
         if clip.fade_out > 0:
             fw = min(rect.width(), clip.fade_out * scale)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(0, 0, 0, 60))
+            p.setBrush(fade)
             p.drawPolygon(QPointF(rect.right() - fw, rect.top()),
                           QPointF(rect.right(), rect.top()),
                           QPointF(rect.right(), rect.bottom()))
