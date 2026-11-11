@@ -50,8 +50,9 @@ def main() -> int:
         except Exception:
             log_path = None
         if log_path is not None:
-            logging.basicConfig(filename=str(log_path), level=logging.INFO,
-                                format="%(asctime)s %(message)s")
+            handler = logging.FileHandler(str(log_path), encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+            logging.basicConfig(level=logging.INFO, handlers=[handler])
 
     ensure_hf_endpoint()
 
