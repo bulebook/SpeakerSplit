@@ -1,10 +1,12 @@
 """设置浮层：主窗口内的设置面板，避免独立无边框窗口的闪黑与错位。"""
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings, Qt, QThread, QVariantAnimation, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import (
+    QEasingCurve, QPropertyAnimation, QSettings, Qt, QThread, Signal,
+)
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel,
+    QComboBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QPushButton, QScrollArea, QStackedWidget,
     QVBoxLayout, QWidget,
 )
@@ -44,9 +46,13 @@ class SettingsOverlay(QWidget):
         super().__init__(main)
         self.main = main
         self._settings = QSettings("SpeakerSplit", "SpeakerSplit")
-        self._alpha = 0.0
         self._closing = False
         self.hide()
+
+        # 整个浮层（遮罩 + 卡片）统一由透明度特效淡入，避免卡片先于遮罩出现
+        self._opacity = QGraphicsOpacityEffect(self)
+        self._opacity.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity)
 
         self.outer = QVBoxLayout(self)
         self.outer.setContentsMargins(0, 0, 0, 0)
@@ -111,9 +117,9 @@ class SettingsOverlay(QWidget):
 
         self.side.currentRowChanged.connect(self._switch)
 
-        self._fade = QVariantAnimation(self)
+        self._fade = QPropertyAnimation(self._opacity, b"opacity", self)
         self._fade.setDuration(180)
-        self._fade.valueChanged.connect(self._on_alpha)
+        self._fade.setEasingCurve(QEasingCurve.OutCubic)
         self._fade.finished.connect(self._on_fade_end)
 
     # ---------- 显示 / 隐藏 ----------
@@ -122,8 +128,7 @@ class SettingsOverlay(QWidget):
         self.setGeometry(self.main.rect())
         self._closing = False
         self._fade.stop()
-        self._alpha = 0.0
-        self.card.setVisible(False)   # 首帧只画遮罩，避免卡片凭空出现
+        self._opacity.setOpacity(0.0)
         self.raise_()
         self.show()
         self.setFocus()
@@ -136,26 +141,18 @@ class SettingsOverlay(QWidget):
             return
         self._closing = True
         self._fade.stop()
-        self._fade.setStartValue(self._alpha)
+        self._fade.setStartValue(self._opacity.opacity())
         self._fade.setEndValue(0.0)
         self._fade.start()
-
-    def _on_alpha(self, value):
-        self._alpha = float(value)
-        if self._alpha > 0.01 and not self.card.isVisible() and not self._closing:
-            self.card.setVisible(True)
-        self.update()
 
     def _on_fade_end(self):
         if self._closing:
             self.hide()
 
     def paintEvent(self, event):
-        p = QColor(20, 24, 36, 70) if not theme.dark else QColor(0, 0, 0, 120)
-        p.setAlphaF(p.alphaF() * self._alpha)
-        from PySide6.QtGui import QPainter
+        color = QColor(20, 24, 36, 70) if not theme.dark else QColor(0, 0, 0, 120)
         painter = QPainter(self)
-        painter.fillRect(self.rect(), p)
+        painter.fillRect(self.rect(), color)
 
     def mousePressEvent(self, e):
         if not self.card.geometry().contains(e.position().toPoint()):
