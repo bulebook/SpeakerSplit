@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import (
-    QEasingCurve, QPropertyAnimation, QSettings, Qt, QThread, Signal,
+    QEasingCurve, QPropertyAnimation, QSettings, Qt, QThread, QTimer, Signal,
 )
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
@@ -135,6 +135,17 @@ class SettingsOverlay(QWidget):
         self._fade.setStartValue(0.0)
         self._fade.setEndValue(1.0)
         self._fade.start()
+        QTimer.singleShot(0, self._close_stray_popups)
+
+    def _close_stray_popups(self):
+        """收起残留的下拉/提示 Popup 顶层窗口，避免小方块悬在浮层上。"""
+        from PySide6.QtWidgets import QApplication
+
+        for widget in QApplication.topLevelWidgets():
+            if widget is self or widget is self.main:
+                continue
+            if widget.isVisible() and (widget.windowFlags() & Qt.Popup):
+                widget.hide()
 
     def close_(self):
         if not self.isVisible():
@@ -148,6 +159,8 @@ class SettingsOverlay(QWidget):
     def _on_fade_end(self):
         if self._closing:
             self.hide()
+        else:
+            self._close_stray_popups()
 
     def paintEvent(self, event):
         color = QColor(20, 24, 36, 70) if not theme.dark else QColor(0, 0, 0, 120)
@@ -167,6 +180,8 @@ class SettingsOverlay(QWidget):
     # ---------- 页面 ----------
     def _rebuild_pages(self, index: int | None = None):
         keep = self.side.currentRow() if index is None else index
+        for combo in self.findChildren(QComboBox):
+            combo.hidePopup()
         while self.stack.count():
             w = self.stack.widget(0)
             self.stack.removeWidget(w)
