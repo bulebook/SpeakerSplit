@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import (
-    QEasingCurve, QPropertyAnimation, QSettings, Qt, QThread, QTimer, Signal,
+    QEasingCurve, QPropertyAnimation, QSettings, Qt, QThread, Signal,
 )
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
@@ -135,17 +135,6 @@ class SettingsOverlay(QWidget):
         self._fade.setStartValue(0.0)
         self._fade.setEndValue(1.0)
         self._fade.start()
-        QTimer.singleShot(0, self._close_stray_popups)
-
-    def _close_stray_popups(self):
-        """收起残留的下拉/提示 Popup 顶层窗口，避免小方块悬在浮层上。"""
-        from PySide6.QtWidgets import QApplication
-
-        for widget in QApplication.topLevelWidgets():
-            if widget is self or widget is self.main:
-                continue
-            if widget.isVisible() and (widget.windowFlags() & Qt.Popup):
-                widget.hide()
 
     def close_(self):
         if not self.isVisible():
@@ -159,8 +148,6 @@ class SettingsOverlay(QWidget):
     def _on_fade_end(self):
         if self._closing:
             self.hide()
-        else:
-            self._close_stray_popups()
 
     def paintEvent(self, event):
         color = QColor(20, 24, 36, 70) if not theme.dark else QColor(0, 0, 0, 120)
@@ -195,6 +182,12 @@ class SettingsOverlay(QWidget):
         self.side.setCurrentRow(keep)
         self._switch(keep)
 
+    @staticmethod
+    def _fix_combo(combo: QComboBox):
+        """强制下拉容器使用无边框 Popup，避免出现带系统标题栏的小窗口。"""
+        combo.view().window().setWindowFlags(
+            Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+
     def _page_general(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -202,6 +195,7 @@ class SettingsOverlay(QWidget):
 
         lay.addWidget(self._label("模型下载源", bold=True))
         self.src_box = QComboBox()
+        self._fix_combo(self.src_box)
         self.src_box.addItem("自动（优先国内镜像）", "auto")
         self.src_box.addItem("HuggingFace 官方", "hf")
         self.src_box.addItem("hf-mirror 镜像", "mirror")
@@ -232,6 +226,7 @@ class SettingsOverlay(QWidget):
 
         lay.addWidget(self._label("处理方式", bold=True))
         self.clean_box = QComboBox()
+        self._fix_combo(self.clean_box)
         self.clean_box.addItem("去人声（先分离背景音乐，识别更准）", True)
         self.clean_box.addItem("保留原声（不做人声分离）", False)
         self.clean_box.setCurrentIndex(0 if self.main.clean_mode else 1)
@@ -241,6 +236,7 @@ class SettingsOverlay(QWidget):
         streams = self.main.media_info.audio_streams if self.main.media_info else []
         if len(streams) > 1:
             self.track_box = QComboBox()
+            self._fix_combo(self.track_box)
             for s in streams:
                 self.track_box.addItem(s.describe(), s.ordinal)
             idx = next((i for i, s in enumerate(streams)
@@ -309,6 +305,7 @@ class SettingsOverlay(QWidget):
             "标准：large-v3-turbo，速度快，适合大部分素材。\n"
             "高精度：large-v3，方言与错字更少，速度慢约 3.6 倍，首次需下载约 3 G。"))
         self.asr_box = QComboBox()
+        self._fix_combo(self.asr_box)
         self.asr_box.addItem("标准（large-v3-turbo）", "large-v3-turbo")
         self.asr_box.addItem("高精度（large-v3）", "large-v3")
         current = self.main.whisper_model
