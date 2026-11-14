@@ -154,6 +154,8 @@ class TrackCanvas(QWidget):
     trackToggled = Signal(int, str)
     segmentDropped = Signal(dict, int, float)
     selectionChanged = Signal()
+    clipActivated = Signal(float)
+    zoomChanged = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -437,8 +439,9 @@ class TrackCanvas(QWidget):
                 values = sub
             values = np.nan_to_num(np.asarray(values, dtype=np.float32),
                                    nan=0.0, posinf=1.0, neginf=0.0)
-            if len(self._wave_cache) > 2000:
-                self._wave_cache.clear()
+            if len(self._wave_cache) > 5000:
+                for stale in list(self._wave_cache)[:2500]:
+                    self._wave_cache.pop(stale, None)
             self._wave_cache[key] = values
 
         n = len(values)
@@ -566,6 +569,49 @@ class TrackCanvas(QWidget):
             self._before = None
         self._drag = None
         self.update()
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            super().mouseDoubleClickEvent(e)
+            return
+        hit = self._hit(e.position().toPoint())
+        if hit:
+            _, clip = hit
+            self.clipActivated.emit(clip.start)
+            e.accept()
+        else:
+            super().mouseDoubleClickEvent(e)
+
+    def _scroll_area(self):
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, QScrollArea):
+            parent = parent.parentWidget()
+        return parent
+
+    def wheelEvent(self, e):
+        if not (e.modifiers() & Qt.ControlModifier):
+            super().wheelEvent(e)
+            return
+        delta = e.angleDelta().y()
+        if delta == 0:
+            return
+        old_pps = self._pps or 40.0
+        center_t = self._t(e.position().x())
+        factor = 1.15 if delta > 0 else 1.0 / 1.15
+        new_pps = max(PPS_MIN, min(PPS_MAX, old_pps * factor))
+        if self.project:
+            limit = (PPS_MAX_WIDTH - HEADER_W - 40) / max(1.0, self.project.duration)
+            new_pps = min(new_pps, limit)
+        if abs(new_pps - old_pps) < 1e-6:
+            e.accept()
+            return
+        self.set_pps(new_pps)
+        scroll = self._scroll_area()
+        if scroll is not None:
+            bar = scroll.horizontalScrollBar()
+            bar.setValue(int(bar.value() + self._x(center_t) - e.position().x()))
+        self.zoomChanged.emit(new_pps)
+        e.accept()
 
     def contextMenuEvent(self, e):
         hit = self._hit(e.pos())
@@ -701,6 +747,8 @@ class EditorView(QWidget):
         self.canvas.trackToggled.connect(self._toggle_track)
         self.canvas.segmentDropped.connect(self._drop_segment)
         self.canvas.selectionChanged.connect(self._update_status)
+        self.canvas.clipActivated.connect(self.play_from)
+        self.canvas.zoomChanged.connect(self._sync_zoom_slider)
         self.scroll.setWidget(self.canvas)
         root.addWidget(self.scroll, 1)
 
@@ -848,6 +896,11 @@ class EditorView(QWidget):
         self.player.setPosition(int(t * 1000))
         self.canvas.set_playhead(t)
         self._update_status()
+
+    def play_from(self, t: float):
+        self.seek(t)
+        if self.player.playbackState() != QMediaPlayer.PlayingState:
+            self.toggle_play()
 
     def _slider_seek(self, value: int):
         duration = self.project.duration if self.project else 0.0

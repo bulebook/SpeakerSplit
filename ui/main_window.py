@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
 
         self._ambient_t = 0.0
         self._ambient_timer = QTimer(self)
-        self._ambient_timer.setInterval(100)
+        self._ambient_timer.setInterval(200)
         self._ambient_timer.timeout.connect(self._tick_ambient)
         self._ambient_timer.start()
         self._ticker = Ticker.instance()
@@ -479,13 +479,18 @@ class MainWindow(QMainWindow):
         self._grip = grip
 
     def _tick_ambient(self):
-        self._ambient_t = (self._ambient_t + 0.1 / 24.0) % 1.0
+        ticker = getattr(self, "_ticker", None)
+        if ticker is not None and ticker.running():
+            return
+        self._ambient_t += 0.1 / 24.0
+        self._ambient_t %= 1.0
         self.update()
 
     def _on_anim_active(self, active: bool):
         if active:
             self._ambient_timer.stop()
         elif self.isVisible() and not self._ambient_timer.isActive():
+            self._ambient_timer.setInterval(200)
             self._ambient_timer.start()
 
     def _apply_window_style(self):
@@ -991,7 +996,6 @@ class MainWindow(QMainWindow):
         self.step_rail.set_times([None] * 5)
         self.stage_label.setText("读取素材 · 0.0s")
         self._stage_timer.start()
-        self._sync_state()
 
         self.worker = PipelineWorker(self.source, out_dir, options, self)
         self.worker.stageChanged.connect(self.on_stage)

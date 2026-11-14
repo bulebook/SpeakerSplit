@@ -121,11 +121,13 @@ class SettingsOverlay(QWidget):
         self._rebuild_pages(index)
         self.setGeometry(self.main.rect())
         self._closing = False
+        self._fade.stop()
+        self._alpha = 0.0
+        self.card.setVisible(False)   # 首帧只画遮罩，避免卡片凭空出现
         self.raise_()
         self.show()
         self.setFocus()
-        self._fade.stop()
-        self._fade.setStartValue(self._alpha)
+        self._fade.setStartValue(0.0)
         self._fade.setEndValue(1.0)
         self._fade.start()
 
@@ -140,6 +142,8 @@ class SettingsOverlay(QWidget):
 
     def _on_alpha(self, value):
         self._alpha = float(value)
+        if self._alpha > 0.01 and not self.card.isVisible() and not self._closing:
+            self.card.setVisible(True)
         self.update()
 
     def _on_fade_end(self):
