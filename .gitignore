@@ -42,3 +42,6 @@ Thumbs.db
 
 # 打包暂存目录
 _stage/
+
+# 运行时目录（打包/测试用）
+runtimes/

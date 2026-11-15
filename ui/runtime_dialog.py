@@ -86,7 +86,7 @@ class RuntimeDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
         buttons.addStretch(1)
-        self.btn_later = QPushButton("以后再说" if not self._installed else "关闭")
+        self.btn_later = QPushButton("关闭" if self._installed else "不再提示")
         self.btn_later.clicked.connect(self.reject)
         self.btn_go = QPushButton("重新下载" if self._installed else "下载 GPU 包")
         self.btn_go.setObjectName("Primary")
