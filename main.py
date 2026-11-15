@@ -33,11 +33,15 @@ if sys.platform == "win32":
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, Qt, QTimer
 
 from app.download import ensure_hf_endpoint
+from app.runtime_pack import activate as _activate_runtime
 from ui.main_window import MainWindow
 from ui.theme import theme
+
+# 必须在任何 torch 导入之前决定用哪份运行时（CPU 随包自带 / GPU 包按需下载）
+_RUNTIME = _activate_runtime()
 
 
 def main() -> int:
@@ -62,6 +66,7 @@ def main() -> int:
 
     logging.info("==== 启动 %s（frozen=%s）====",
                  __import__("app").__version__, getattr(sys, "frozen", False))
+    logging.info("torch 运行时: %s", _RUNTIME or "无（人声分离不可用）")
 
     ensure_hf_endpoint()
 
@@ -153,6 +158,9 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+
+    from ui.runtime_dialog import maybe_offer as _maybe_offer_gpu
+    QTimer.singleShot(1500, lambda: _maybe_offer_gpu(window))
     return app.exec()
 
 

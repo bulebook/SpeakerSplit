@@ -56,6 +56,13 @@ def separate_vocals(audio: Path, out_dir: Path, model_key: str = sm.DEFAULT_KEY,
     """返回人声轨 WAV 路径。"""
     audio = Path(audio)
     out_dir = Path(out_dir)
+    if getattr(sys, "frozen", False):
+        from . import runtime_pack
+
+        if not runtime_pack.active():
+            raise RuntimeError(
+                "缺少 torch 运行时（runtimes/cpu 或 runtimes/gpu 不存在），"
+                "请重新解压安装包，或在 设置 › 通用 里下载 GPU 包")
     out_dir.mkdir(parents=True, exist_ok=True)
     spec = sm.BY_KEY.get(model_key, sm.BY_KEY[sm.DEFAULT_KEY])
 

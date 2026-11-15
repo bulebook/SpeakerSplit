@@ -204,9 +204,26 @@ class SettingsOverlay(QWidget):
         path.setWordWrap(True)
         path.setStyleSheet(f"color: {theme.s('text2')};")
         lay.addWidget(path)
-        btn = SpringButton("打开模型目录")
+        btn = SpringButton("打开模型目录", "glass", page)
         btn.clicked.connect(self._open_models)
         lay.addWidget(btn, 0, Qt.AlignLeft)
+
+        lay.addSpacing(8)
+        lay.addWidget(self._label("GPU 加速", bold=True))
+        from app import runtime_pack as pack
+
+        if pack.gpu_ready():
+            state = "已安装，人声分离会在显卡上运行。"
+        elif pack.has_nvidia_gpu():
+            state = f"未安装。下载加速包（{pack.GPU_SIZE_TEXT}）后可用显卡加速；不装也能用，只是慢很多。"
+        else:
+            state = "这台电脑没有检测到 NVIDIA 显卡，只能使用 CPU。"
+        lay.addWidget(self._label(state))
+        if pack.gpu_ready() or pack.has_nvidia_gpu():
+            gpu_btn = SpringButton("重新下载 GPU 包" if pack.gpu_ready() else "下载 GPU 包",
+                                   "glass", page)
+            gpu_btn.clicked.connect(self._open_runtime)
+            lay.addWidget(gpu_btn, 0, Qt.AlignLeft)
         lay.addStretch(1)
         return page
 
@@ -419,6 +436,12 @@ class SettingsOverlay(QWidget):
             os.startfile(str(MODELS_DIR))
         except Exception:
             subprocess.Popen(["explorer", str(MODELS_DIR)])
+
+    def _open_runtime(self):
+        from .runtime_dialog import RuntimeDialog
+
+        RuntimeDialog(self.main).exec()
+        self._rebuild_pages(self.side.currentRow())
 
     def _save_source(self, index: int):
         self._settings.setValue("download_source", self.src_box.currentData())
