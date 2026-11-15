@@ -43,6 +43,7 @@ def run(source: Path, out_dir: Path, *, audio_track: int = 0, clean: bool = True
             on_progress(max(0.0, min(1.0, v)))
 
     stage("probe", "读取素材信息")
+    _log(f"      素材 {source}")
     info = media.probe(source)
     if audio_track < 0 or audio_track >= len(info.audio_streams):
         raise ValueError(f"音轨序号 {audio_track} 无效，共 {len(info.audio_streams)} 条")

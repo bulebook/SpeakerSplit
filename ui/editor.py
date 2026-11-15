@@ -8,10 +8,10 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import (
-    QPoint, QPointF, QRectF, Qt, QThread, QUrl, Signal,
+    QPoint, QPointF, QRectF, Qt, QThread, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen,
+    QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap,
     QUndoCommand, QUndoStack,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -35,6 +35,9 @@ BTN = 20
 PEAK_BUCKET = 0.02
 PPS_MIN, PPS_MAX = 1.0, 160.0
 PPS_MAX_WIDTH = 60000
+# 波形 pixmap 缓存：单张过宽的片段直接走 path 绘制，总量按字节数封顶
+WAVE_PIXMAP_MAX_W = 3000
+WAVE_PIXMAP_BUDGET = 48 * 1024 * 1024
 
 _FONT_CACHE: dict[tuple, QFont] = {}
 _PEN_CACHE: dict[tuple, QPen] = {}
@@ -171,7 +174,10 @@ class TrackCanvas(QWidget):
         self._pending: set[str] = set()
         self._workers: list[_PeaksWorker] = []
         self._wave_cache: dict[tuple, np.ndarray] = {}
+        self._wave_pixmap_cache: dict[tuple, QPixmap] = {}
+        self._wave_pixmap_bytes = 0
         self._label_cache: dict[tuple, str] = {}
+        self._peaks_dirty = False
         self.setMinimumHeight(240)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
@@ -182,6 +188,8 @@ class TrackCanvas(QWidget):
         self.selection.clear()
         self.selected = None
         self._wave_cache.clear()
+        self._wave_pixmap_cache.clear()
+        self._wave_pixmap_bytes = 0
         self._label_cache.clear()
         self._ensure_peaks()
         self._update_width()
@@ -190,6 +198,9 @@ class TrackCanvas(QWidget):
 
     def set_pps(self, pps: float):
         self._pps = max(PPS_MIN, min(PPS_MAX, pps))
+        self._wave_cache.clear()
+        self._wave_pixmap_cache.clear()
+        self._wave_pixmap_bytes = 0
         self._update_width()
         self.update()
 
@@ -224,6 +235,13 @@ class TrackCanvas(QWidget):
         self._pending.discard(path)
         _PEAK_CACHE[path] = (peaks, rate)
         self._peaks[path] = (peaks, rate)
+        # 多个文件几乎同时解析完时合并成一次重绘，避免每个文件都全量刷一次
+        if not self._peaks_dirty:
+            self._peaks_dirty = True
+            QTimer.singleShot(0, self._flush_peaks)
+
+    def _flush_peaks(self):
+        self._peaks_dirty = False
         self.update()
 
     # ---------- 坐标 ----------
@@ -447,6 +465,25 @@ class TrackCanvas(QWidget):
         n = len(values)
         if n == 0:
             return
+        wave_color = _color((base or QColor(theme.ACCENT)).darker(115), 150)
+        w = max(1, int(rect.width()))
+        h = max(1, int(rect.height()))
+        # 片段比屏幕宽太多时，缓存一张同尺寸的图会吃掉几十 MB，直接走 path 更划算
+        if w > WAVE_PIXMAP_MAX_W:
+            self._draw_wave_path(p, rect, values, wave_color)
+            return
+        dpr = self.devicePixelRatioF() or 1.0
+        pm_key = (key, w, h, dpr, wave_color.rgba())
+        pixmap = self._wave_pixmap_cache.get(pm_key)
+        if pixmap is None:
+            pixmap = self._build_wave_pixmap(values, w, h, dpr, wave_color)
+            self._store_wave_pixmap(pm_key, pixmap)
+        p.drawPixmap(QPointF(rect.left(), rect.top()), pixmap)
+
+    def _draw_wave_path(self, p: QPainter, rect: QRectF, values: np.ndarray,
+                        color: QColor):
+        """旧路径：直接画 QPainterPath，只在片段过宽时不走 pixmap 缓存。"""
+        n = len(values)
         mid = rect.center().y() + 8
         half = max(1.0, rect.height() / 2 - 12)
         step = rect.width() / n
@@ -457,10 +494,44 @@ class TrackCanvas(QWidget):
         for i in range(n - 1, -1, -1):
             path.lineTo(rect.left() + i * step, mid + float(values[i]) * half)
         path.closeSubpath()
-        wave_color = _color((base or QColor(theme.ACCENT)).darker(115), 150)
         p.setPen(Qt.NoPen)
-        p.setBrush(wave_color)
+        p.setBrush(color)
         p.drawPath(path)
+
+    def _store_wave_pixmap(self, key: tuple, pixmap: QPixmap):
+        cache = self._wave_pixmap_cache
+        cache[key] = pixmap
+        self._wave_pixmap_bytes += pixmap.width() * pixmap.height() * 4
+        while self._wave_pixmap_bytes > WAVE_PIXMAP_BUDGET and len(cache) > 1:
+            oldest = next(iter(cache))
+            old = cache.pop(oldest)
+            self._wave_pixmap_bytes -= old.width() * old.height() * 4
+
+    def _build_wave_pixmap(self, values: np.ndarray, w: int, h: int,
+                           dpr: float, color: QColor) -> QPixmap:
+        """把一段波形渲染到离屏 pixmap，避免每帧重建上千段 QPainterPath。"""
+        n = len(values)
+        mid = h / 2 + 8
+        half = max(1.0, h / 2 - 12)
+        step = w / n
+        path = QPainterPath()
+        path.moveTo(0, mid)
+        for i in range(n):
+            path.lineTo(i * step, mid - float(values[i]) * half)
+        for i in range(n - 1, -1, -1):
+            path.lineTo(i * step, mid + float(values[i]) * half)
+        path.closeSubpath()
+
+        pixmap = QPixmap(max(1, int(w * dpr)), max(1, int(h * dpr)))
+        pixmap.setDevicePixelRatio(dpr)
+        pixmap.fill(Qt.transparent)
+        vp = QPainter(pixmap)
+        vp.setRenderHint(QPainter.Antialiasing)
+        vp.setPen(Qt.NoPen)
+        vp.setBrush(color)
+        vp.drawPath(path)
+        vp.end()
+        return pixmap
 
     def _draw_fades(self, p: QPainter, rect: QRectF, clip: Clip):
         scale = self._scale()
@@ -530,10 +601,17 @@ class TrackCanvas(QWidget):
             self.seekRequested.emit(self._t(e.position().x()))
             self.update()
 
+    def _repaint_lanes(self, *indexes):
+        """只重绘指定的轨道行，拖动时不必整张画布重绘。"""
+        for ti in {i for i in indexes if i is not None}:
+            top = int(self._lane_top(ti)) - 2
+            self.update(0, top, self.width(), LANE_H + 4)
+
     def mouseMoveEvent(self, e):
         if not self._drag:
             return
         mode, ti, clip, x0, start0, in0, out0 = self._drag
+        prev_ti = ti
         delta = self._t(e.position().x()) - self._t(x0)
 
         def snap(value: float) -> float:
@@ -559,7 +637,7 @@ class TrackCanvas(QWidget):
             clip.start = max(0.0, snap(start0 + (new_in - in0)))
         else:
             clip.src_out = max(in0 + 0.05, snap(out0 + delta))
-        self.update()
+        self._repaint_lanes(prev_ti, ti)
 
     def mouseReleaseEvent(self, e):
         if self._drag is not None and self._before is not None:

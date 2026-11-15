@@ -41,18 +41,27 @@ from ui.theme import theme
 
 
 def main() -> int:
+    # 源码运行（run_ui.bat 走 pythonw）同样要留日志，否则出错时没有任何线索
     if getattr(sys, "frozen", False):
-        log_path = Path(sys.executable).resolve().parent / "SpeakerSplit.log"
-        try:
-            stream = open(log_path, "a", encoding="utf-8", buffering=1)
+        log_dir = Path(sys.executable).resolve().parent
+    else:
+        log_dir = Path(__file__).resolve().parent
+    log_path = log_dir / "SpeakerSplit.log"
+    try:
+        stream = open(log_path, "a", encoding="utf-8", buffering=1)
+        if sys.stdout is None:
             sys.stdout = stream
+        if sys.stderr is None:
             sys.stderr = stream
-        except Exception:
-            log_path = None
-        if log_path is not None:
-            handler = logging.FileHandler(str(log_path), encoding="utf-8")
-            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-            logging.basicConfig(level=logging.INFO, handlers=[handler])
+    except Exception:
+        log_path = None
+    if log_path is not None:
+        handler = logging.FileHandler(str(log_path), encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        logging.basicConfig(level=logging.INFO, handlers=[handler])
+
+    logging.info("==== 启动 %s（frozen=%s）====",
+                 __import__("app").__version__, getattr(sys, "frozen", False))
 
     ensure_hf_endpoint()
 

@@ -1,6 +1,7 @@
 """主窗口：液态玻璃风格。"""
 from __future__ import annotations
 
+import logging
 import math
 import sys
 import time
@@ -123,6 +124,7 @@ class PipelineWorker(QThread):
                 **self.options)
             self.succeeded.emit(project)
         except Exception as exc:
+            logging.exception("[pipeline] 处理失败: %s", exc)
             self.failed.emit(f"{exc}\n\n{traceback.format_exc()}")
 
 
@@ -1363,28 +1365,6 @@ class MainWindow(QMainWindow):
             self.vol_slider.setValue(0)
         else:
             self.vol_slider.setValue(getattr(self, "_prev_volume", 70))
-
-    # ------------------------------------------------------------ 项目数据
-    @staticmethod
-    def _compute_waveform(path, bucket_sec: float = 0.1):
-        if not path:
-            return None
-        try:
-            import numpy as np
-            import soundfile as sf
-
-            data, sr = sf.read(str(path), dtype="float32", always_2d=False)
-            if data.ndim > 1:
-                data = data.mean(axis=1)
-            step = max(1, int(sr * bucket_sec))
-            n = len(data) // step
-            if n == 0:
-                return None
-            block = np.abs(data[: n * step]).reshape(n, step).max(axis=1)
-            peak = float(block.max()) or 1.0
-            return (block / peak).astype(np.float32)
-        except Exception:
-            return None
 
     # ------------------------------------------------------------ 导出
     def export_result(self):
