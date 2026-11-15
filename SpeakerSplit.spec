@@ -48,7 +48,7 @@ _extra = sorted(_scan_imports(_RUNTIME))
 
 datas = [('assets/app.ico', 'assets'), ('assets/icon.png', 'assets')]
 binaries = []
-hiddenimports = (['app.diarize_cli'] + _extra + _TORCH_DEPS)
+hiddenimports = (['app.diarize_cli', 'lzma'] + _extra + _TORCH_DEPS)
 # torch / torchaudio 不进包：CPU 版随安装包放在 runtimes/cpu，GPU 版首次启动再下载，
 # 打进包里的 CUDA 库有 3.4 GB，而 PyInstaller 的 FrozenImporter 会盖住外部目录
 tmp_ret = collect_all('faster_whisper')
