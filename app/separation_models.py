@@ -76,13 +76,55 @@ def uvr_dir() -> Path:
     return path
 
 
+META_URL = "https://raw.githubusercontent.com/TRvlvr/application_data/main"
+# 三个清单在仓库里的相对路径（audio_separator 自己也是从这些地址取的）
+META_PATHS = {
+    "download_checks.json": "filelists/download_checks.json",
+    "vr_model_data.json": "vr_model_data/model_data_new.json",
+    "mdx_model_data.json": "mdx_model_data/model_data_new.json",
+}
+META_FILES = tuple(META_PATHS)
+
+
+def _meta_urls(path: str) -> list[str]:
+    urls = []
+    prefix = os.environ.get("GITHUB_PROXY", "https://gh-proxy.com/").strip()
+    if prefix:
+        urls.append(f"{prefix.rstrip('/')}/{META_URL}/{path}")
+    urls.append(f"https://cdn.jsdelivr.net/gh/TRvlvr/application_data@main/{path}")
+    urls.append(f"{META_URL}/{path}")
+    return urls
+
+
+def ensure_meta() -> None:
+    """确保 audio_separator 需要的清单文件在本地。
+
+    audio_separator 启动时会自己去 raw.githubusercontent.com 取，国内网络常被
+    拦掉（SSL 证书校验失败，表现为处理直接报错），所以先用我们自己的下载器
+    （支持 GITHUB_PROXY 镜像）补齐，本地有文件它就不会再联网。
+    """
+    from .download import download
+
+    target = uvr_dir()
+    missing = [n for n in META_FILES
+               if not (target / n).exists() or (target / n).stat().st_size == 0]
+    if not missing:
+        return
+
+    for name in missing:
+        for url in _meta_urls(META_PATHS[name]):
+            try:
+                download(url, target / name)
+                break
+            except Exception as exc:
+                print(f"      清单 {name} 下载失败（{url.split('/')[2]}）：{exc}", flush=True)
+
+
 def local_path(model: SepModel) -> Path:
     if model.kind == "demucs":
         cache = Path(os.path.expanduser("~")) / ".cache" / "torch" / "hub" / "checkpoints"
         return cache / model.filename
     return uvr_dir() / model.filename
-
-
 def is_downloaded(model: SepModel) -> bool:
     path = local_path(model)
     if not path.exists():

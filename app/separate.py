@@ -122,6 +122,7 @@ def _separate_with_uvr(audio: Path, out_dir: Path, spec: sm.SepModel,
     from audio_separator.separator import Separator
 
     model_dir = sm.uvr_dir()
+    sm.ensure_meta()                 # 清单缺失时先补，避免 audio_separator 去连 GitHub
     sm.download_model(spec)          # 已下载时只补缺失的 yaml
     sm.ensure_downloaded(spec)
 

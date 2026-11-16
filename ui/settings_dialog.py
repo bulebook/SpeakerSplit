@@ -463,24 +463,36 @@ class SettingsOverlay(QWidget):
         button.setText("下载中…")
         button.setEnabled(False)
         worker = _Downloader(fn, self)
-        worker.progress.connect(lambda done, total: status.setText(
-            f"{done / 1048576:.0f} MB" + (f" / {total / 1048576:.0f} MB" if total else "")))
+        worker.progress.connect(lambda done, total: self._safe_set(
+            status, f"{done / 1048576:.0f} MB" + (f" / {total / 1048576:.0f} MB" if total else "")))
         worker.done.connect(lambda ok, msg: self._download_done(ok, msg, button, status))
         worker.start()
         self._worker = worker
 
+    @staticmethod
+    def _safe_set(label: QLabel, text: str) -> None:
+        """设置页可能在下载过程中被重建，控件已被销毁时直接跳过。"""
+        try:
+            label.setText(text)
+        except RuntimeError:
+            pass
+
     def _download_done(self, ok: bool, message: str,
                        button: QPushButton, status: QLabel):
-        if ok:
-            status.setText("已下载")
-            status.setStyleSheet(f"color: {theme.s('accent')}; font-size: 12px;")
-            button.setVisible(False)
-            self._rebuild_pages(self.side.currentRow())
-        else:
-            status.setText("下载失败")
-            status.setStyleSheet("color: #FF3B30; font-size: 12px;")
-            button.setText("下载")
-            button.setEnabled(True)
+        try:
+            if ok:
+                status.setText("已下载")
+                status.setStyleSheet(f"color: {theme.s('accent')}; font-size: 12px;")
+                button.setVisible(False)
+                self._rebuild_pages(self.side.currentRow())
+            else:
+                status.setText("下载失败")
+                status.setStyleSheet("color: #FF3B30; font-size: 12px;")
+                button.setText("下载")
+                button.setEnabled(True)
+        except RuntimeError:
+            # 控件随设置页一起销毁了，无需再更新界面
+            pass
 
     def _set_mode(self, key: str):
         self._settings.setValue("appearance", key)
