@@ -68,10 +68,22 @@ def apply_mirror(url: str) -> str:
 
 
 def ensure_hf_endpoint() -> None:
-    """直连 huggingface.co 不通时自动切镜像；用户显式设置则不覆盖。"""
+    """直连 huggingface.co 不通时自动切镜像；用户显式设置则不覆盖。
+
+    这里用 requests 探测，而不是 urllib：真正下载走的是 huggingface_hub →
+    requests → certifi，两套 TLS 信任链不一致时（比如中间有个证书被系统信任、
+    certifi 不认的代理），用 urllib 探测会误判成"直连正常"，随后下载才报
+    SSLError。
+    """
     if os.environ.get("HF_ENDPOINT"):
         return
+    ok = False
     try:
-        urllib.request.urlopen("https://huggingface.co", timeout=3)
+        import requests
+
+        ok = requests.head("https://huggingface.co", timeout=4,
+                           allow_redirects=True).status_code < 500
     except Exception:
+        ok = False
+    if not ok:
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"

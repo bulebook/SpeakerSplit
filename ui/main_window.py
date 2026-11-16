@@ -125,7 +125,12 @@ class PipelineWorker(QThread):
             self.succeeded.emit(project)
         except Exception as exc:
             logging.exception("[pipeline] 处理失败: %s", exc)
-            self.failed.emit(f"{exc}\n\n{traceback.format_exc()}")
+            message = str(exc)
+            if "CERTIFICATE_VERIFY_FAILED" in message or "SSLError" in message:
+                message += ("\n\n看起来是网络被拦截（SSL 证书校验失败）。可以试试：\n"
+                            "· 关掉代理 / VPN 后重试\n"
+                            "· 或设置环境变量 HF_ENDPOINT=https://hf-mirror.com")
+            self.failed.emit(f"{message}\n\n{traceback.format_exc()}")
 
 
 class MainWindow(QMainWindow):

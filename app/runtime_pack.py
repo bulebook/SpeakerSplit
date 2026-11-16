@@ -19,7 +19,7 @@ from .download import apply_mirror, download
 
 # GPU 加速包（CUDA 版 torch + torchaudio），发布在 GitHub Release 上
 GPU_RELEASE = ("https://github.com/bulebook/SpeakerSplit/releases/download/"
-               "v2.2.2/SpeakerSplit-2.2.2-gpu-pack.tar.xz")
+               "v2.2.3/SpeakerSplit-2.2.3-gpu-pack.tar.xz")
 GPU_PARTS = 2           # 分卷数，打包时确定
 GPU_SIZE_TEXT = "约 2 GB"
 
