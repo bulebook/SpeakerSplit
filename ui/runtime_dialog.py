@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QSettings, QThread, Signal
+from PySide6.QtCore import QSettings, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
-    QProgressBar, QPushButton, QVBoxLayout, QDialog, Qt,
+    QApplication, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout,
+    QLabel, QProgressBar, QPushButton, QVBoxLayout,
 )
 
 from app import runtime_pack as pack
